@@ -1,71 +1,82 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { Plus, Lock, Unlock, Calendar, CalendarPlus } from "lucide-react"
+import { Plus, Lock, Unlock, Calendar, CalendarPlus, X, ChevronLeft, ChevronRight, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
-
-interface Member {
-  id: string
-  name: string
-  color: string
-}
-
-interface Band {
-  id: string
-  name: string
-  members: Member[]
-}
+import type { Member, Band, Schedule, Period, Slot } from "@/lib/types"
 
 interface ScheduleGridProps {
-  schedules: Record<string, Record<string, boolean>>
+  schedules: Schedule
+  dateRange: {
+    start: Date
+    end: Date
+  },
+  periods: Period[]
   selectedBand: Band
   selectedMember: Member
-  onToggleSlot: (memberId: string, date: string, time: string) => void
-  onMemberChange: (member: Member) => void
-  onAddMember: () => void
-  lockedSlots: Set<string>
-  onToggleLock: (date: string, time: string) => void
-  onExportToCalendar: (date: string, time: string) => void
-  onImportFromCalendar: (memberId: string) => void
+  onToggleSlot: (memberId: number, date: string, period: Period) => void
+  lockedSlots: Slot[]
+  onToggleLock: (slot: Slot) => void
+  onExportToCalendar: (slot: Slot) => void
+  onImportFromCalendar: (memberId: number) => void
+  onRemoveMember?: (memberId: number) => void
+  canRemoveMembers?: boolean
+  currentActorId?: number | null
+  isLoggedIn?: boolean
+  onPreviousWeek?: () => void
+  onNextWeek?: () => void
 }
-
-// 1週間分の日付を生成
-const generateDates = () => {
-  const dates = []
-  const today = new Date()
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(today)
-    date.setDate(today.getDate() + i)
-    dates.push(date)
-  }
-  return dates
-}
-
-// 1.5時間ごとのタイムスロット（9:00-21:00）
-const timeSlots = [
-  { label: "09:00-10:30", value: "09:00" },
-  { label: "10:30-12:00", value: "10:30" },
-  { label: "12:00-13:30", value: "12:00" },
-  { label: "13:30-15:00", value: "13:30" },
-  { label: "15:00-16:30", value: "15:00" },
-  { label: "16:30-18:00", value: "16:30" },
-  { label: "18:00-19:30", value: "18:00" },
-  { label: "19:30-21:00", value: "19:30" },
-]
 
 export function ScheduleGrid({
   schedules,
+  dateRange,
+  periods,
   selectedBand,
   selectedMember,
   onToggleSlot,
-  onMemberChange,
-  onAddMember,
   lockedSlots,
   onToggleLock,
   onExportToCalendar,
   onImportFromCalendar,
+  onRemoveMember,
+  canRemoveMembers = false,
+  currentActorId = null,
+  isLoggedIn = false,
+  onPreviousWeek,
+  onNextWeek,
 }: ScheduleGridProps) {
-  const dates = generateDates()
+  // モバイルかどうかを判定
+  const [isMobile, setIsMobile] = useState(false)
+  // カレンダーボタンのチェックマーク表示状態（スロットごと）
+  const [calendarCheckStates, setCalendarCheckStates] = useState<Map<string, boolean>>(new Map())
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640) // sm breakpoint
+    }
+    
+    checkMobile()
+    window.addEventListener("resize", checkMobile)
+    return () => window.removeEventListener("resize", checkMobile)
+  }, [])
+
+  // dateRangeから日付の配列を生成
+  const generateDates = () => {
+    const dates: Date[] = []
+    const current = new Date(dateRange.start)
+    const end = new Date(dateRange.end)
+    
+    while (current <= end) {
+      dates.push(new Date(current))
+      current.setDate(current.getDate() + 1)
+    }
+    return dates
+  }
+
+  const allDates = generateDates()
+  // モバイルの場合は最初の1日だけ表示
+  const dates = isMobile ? allDates.slice(0, 1) : allDates
 
   const formatDate = (date: Date) => {
     return date.toISOString().split("T")[0]
@@ -86,11 +97,12 @@ export function ScheduleGrid({
     return `${day}(${dayOfWeek})`
   }
 
-  const getAllMembersAvailability = (date: string, time: string) => {
+  const getAllMembersAvailability = (date: string, period: Period) => {
+    const periodKey = `${period.start}-${period.end}`
     const availableMembers = selectedBand.members.filter((member) => {
-      const memberSchedule = schedules[member.id]
+      const memberSchedule = schedules[member.id.toString()]
       if (!memberSchedule) return false
-      return memberSchedule[`${date}-${time}`] || false
+      return memberSchedule[`${date}-${periodKey}`] || false
     })
     return {
       count: availableMembers.length,
@@ -99,174 +111,293 @@ export function ScheduleGrid({
     }
   }
 
+  const isSlotLocked = (date: Date, period: Period) => {
+    return lockedSlots.some(
+      (slot) => {
+        const slotDateStr = formatDate(slot.date)
+        const currentDateStr = formatDate(date)
+        return slotDateStr === currentDateStr && slot.period.id === period.id
+      }
+    )
+  }
+
+  const formatPeriodLabel = (period: Period) => {
+    // HH:MM:SS形式をHH:MM形式に変換
+    const formatTime = (time: string) => {
+      return time.split(":").slice(0, 2).join(":")
+    }
+    return `${formatTime(period.start)}-${formatTime(period.end)}`
+  }
+
+  // 週の範囲を表示する関数
+  const formatWeekRange = () => {
+    const startMonth = dateRange.start.getMonth() + 1
+    const startDay = dateRange.start.getDate()
+    const endMonth = dateRange.end.getMonth() + 1
+    const endDay = dateRange.end.getDate()
+    
+    if (startMonth === endMonth) {
+      return `${startMonth}/${startDay} - ${endDay}`
+    } else {
+      return `${startMonth}/${startDay} - ${endMonth}/${endDay}`
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <div className="bg-card/50 backdrop-blur-sm rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-foreground">{"予定を入力するメンバーを選択"}</h2>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onImportFromCalendar(selectedMember.id)}
-              className="gap-2 bg-transparent"
-            >
-              <CalendarPlus className="h-4 w-4" />
-              <span className="hidden sm:inline">{"カレンダーからインポート"}</span>
-            </Button>
-            <Button variant="outline" size="sm" onClick={onAddMember} className="gap-2 bg-transparent">
-              <Plus className="h-4 w-4" />
-              <span>{"メンバー追加"}</span>
-            </Button>
-          </div>
-        </div>
+      <div className="p-4">
         <div className="flex flex-wrap gap-2">
-          {selectedBand.members.map((member) => (
-            <button
-              key={member.id}
-              onClick={() => onMemberChange(member)}
+          {selectedBand.members.map((member, i) => (
+            <div
+              key={i}
               className={cn(
-                "flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all",
-                "hover:scale-105 active:scale-95",
-                "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
-                selectedMember.id === member.id
-                  ? "bg-primary text-primary-foreground shadow-md"
-                  : "bg-muted/30 hover:bg-muted/50",
+                "flex items-center gap-2 px-4 py-2.5 rounded-lg",
+                "bg-background border border-border"
               )}
             >
               <div className={cn("h-3 w-3 rounded-full", member.color)} />
               <span className="text-sm font-medium">{member.name}</span>
-            </button>
+              {canRemoveMembers && onRemoveMember && currentActorId !== member.id && (
+                <button
+                  onClick={() => onRemoveMember(member.id)}
+                  className="ml-1 text-muted-foreground hover:text-destructive transition-colors"
+                  title="メンバーを削除"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl bg-card/50 backdrop-blur-sm border border-border shadow-sm -mx-4 sm:mx-0">
+      {/* 週移動コントロール */}
+      <div className="flex items-center justify-center gap-4 p-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onPreviousWeek}
+          className="gap-2"
+          disabled={!onPreviousWeek}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          <span className="hidden sm:inline">前の週</span>
+        </Button>
+        <span className="text-sm font-medium text-foreground min-w-[120px] text-center">
+          {isMobile && dates.length === 1
+            ? formatDisplayDate(dates[0])
+            : formatWeekRange()}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onNextWeek}
+          className="gap-2"
+          disabled={!onNextWeek}
+        >
+          <span className="hidden sm:inline">次の週</span>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl bg-card/50 backdrop-blur-sm border border-border shadow-sm">
         <div className="inline-block min-w-full align-middle">
           <table className="min-w-full border-collapse">
             <thead>
               <tr className="bg-muted/20 border-b border-border">
-                <th className="sticky left-0 z-10 bg-muted/20 px-2 py-3 text-left text-xs font-semibold text-foreground sm:px-4 sm:py-4 sm:text-sm border-r border-border">
-                  {"時間"}
-                </th>
+                  <th className="sticky left-0 z-10 bg-muted/20 px-1.5 py-2 text-center text-[10px] font-semibold text-foreground sm:px-4 sm:py-4 sm:text-sm border-r border-border">
+                    <span className="hidden sm:inline">時間</span>
+                    <span className="sm:hidden">時間</span>
+                  </th>
                 {dates.map((date, index) => (
                   <th
                     key={formatDate(date)}
                     className={cn(
-                      "px-2 py-3 text-center text-xs font-semibold text-foreground min-w-[80px] sm:min-w-[120px] sm:px-4 sm:py-4 sm:text-sm",
+                      "px-1 py-2 text-center text-[10px] font-semibold text-foreground min-w-[60px] sm:min-w-[120px] sm:px-4 sm:py-4 sm:text-sm",
                       index < dates.length - 1 && "border-r border-border/50",
                     )}
                   >
-                    <span className="sm:hidden">{formatShortDate(date)}</span>
-                    <span className="hidden sm:inline">{formatDisplayDate(date)}</span>
+                    <div className="flex flex-col gap-0.5 sm:gap-1">
+                      <span className="sm:hidden text-[9px]">{formatShortDate(date)}</span>
+                      <span className="hidden sm:inline">{formatDisplayDate(date)}</span>
+                    </div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {timeSlots.map((slot, rowIndex) => (
+              {periods.map((period, rowIndex) => (
                 <tr
-                  key={slot.value}
+                  key={period.id}
                   className={cn(
                     "hover:bg-muted/10 transition-colors",
-                    rowIndex < timeSlots.length - 1 && "border-b border-border/30",
+                    rowIndex < periods.length - 1 && "border-b border-border/30",
                   )}
                 >
-                  <td className="sticky left-0 z-10 bg-card/80 backdrop-blur-sm px-2 py-2 text-xs font-medium text-muted-foreground whitespace-nowrap sm:px-4 sm:py-3 sm:text-sm border-r border-border">
-                    {slot.label}
+                  <td className="sticky left-0 z-10 bg-card/80 backdrop-blur-sm px-1.5 py-1.5 text-center text-[10px] font-medium text-muted-foreground whitespace-nowrap sm:px-4 sm:py-3 sm:text-sm border-r border-border">
+                    <span className="hidden sm:inline">{formatPeriodLabel(period)}</span>
+                    <span className="sm:hidden">{period.start.split(":").slice(0, 2).join(":")}</span>
                   </td>
                   {dates.map((date, colIndex) => {
                     const dateStr = formatDate(date)
-                    const availability = getAllMembersAvailability(dateStr, slot.value)
-                    const slotKey = `${dateStr}-${slot.value}`
-                    const isLocked = lockedSlots.has(slotKey)
+                    const availability = getAllMembersAvailability(dateStr, period)
+                    const isLocked = isSlotLocked(date, period)
+                    const slot: Slot = { date, period }
+                    // 現在のアクターIDを使用（未設定の場合はselectedMember.idをフォールバック）
+                    const actorIdToUse = currentActorId || selectedMember.id
+                    // カレンダーボタンのチェックマーク表示状態
+                    const slotKey = `${dateStr}-${period.id}`
+                    const showCalendarCheck = calendarCheckStates.get(slotKey) || false
 
                     return (
                       <td
-                        key={slotKey}
-                        className={cn("p-1 sm:p-2", colIndex < dates.length - 1 && "border-r border-border/30")}
+                        key={`${dateStr}-${period.id}`}
+                        className={cn("p-1.5 sm:p-3 align-top", colIndex < dates.length - 1 && "border-r border-border/30")}
                       >
-                        <div className="relative">
-                          <button
-                            onClick={() => onToggleSlot(selectedMember.id, dateStr, slot.value)}
-                            disabled={isLocked}
+                        <div className="relative min-h-[60px] sm:min-h-[80px]">
+                          <div
+                            onClick={() => !isLocked && onToggleSlot(actorIdToUse, dateStr, period)}
                             className={cn(
-                              "w-full min-h-[100px] rounded-lg transition-all duration-200 relative overflow-hidden",
-                              !isLocked && "hover:scale-[1.02] active:scale-95",
-                              "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
-                              "text-sm sm:text-base sm:min-h-[120px]",
-                              "flex flex-col items-center justify-center p-3 sm:p-4 gap-2",
+                              "w-full rounded-lg transition-all duration-200 relative",
+                              "text-sm",
+                              "flex flex-col items-start p-1.5 sm:p-3 gap-1.5 sm:gap-2",
+                              !isLocked && [
+                                "cursor-pointer",
+                                "hover:bg-muted/60 hover:scale-[1.02] hover:shadow-md",
+                                "active:scale-[0.98] active:bg-muted/80",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                "touch-manipulation", // タッチデバイスでのタップ遅延を削減
+                              ],
                               availability.allAvailable &&
-                                "ring-[3px] ring-blue-500 ring-inset shadow-lg bg-blue-500/5",
-                              !availability.allAvailable && availability.count > 0 && "bg-muted/40",
-                              availability.count === 0 && "bg-muted/10 hover:bg-muted/20",
+                                "ring-[2px] sm:ring-[3px] ring-blue-500 ring-inset shadow-lg bg-blue-500/5",
+                              !availability.allAvailable && availability.count > 0 && [
+                                "bg-muted/40",
+                                !isLocked && "hover:bg-muted/60",
+                              ],
+                              availability.count === 0 && [
+                                "bg-muted/10",
+                                !isLocked && "hover:bg-muted/30 hover:border-2 hover:border-primary/30",
+                              ],
                               isLocked && "opacity-80 cursor-not-allowed",
                             )}
-                            aria-label={`${selectedMember.name} ${slot.label} on ${formatDisplayDate(date)}`}
+                            role="button"
+                            tabIndex={isLocked ? -1 : 0}
+                            onKeyDown={(e) => {
+                              if (!isLocked && (e.key === "Enter" || e.key === " ")) {
+                                e.preventDefault()
+                                onToggleSlot(actorIdToUse, dateStr, period)
+                              }
+                            }}
+                            aria-label={`${selectedMember.name} ${formatPeriodLabel(period)} on ${formatDisplayDate(date)}`}
                           >
                             {isLocked && (
-                              <div className="absolute top-2 right-2">
-                                <Lock className="h-4 w-4 text-primary" />
+                              <div className="absolute top-1 right-1 sm:top-2 sm:right-2 z-10">
+                                <Lock className="h-2.5 w-2.5 sm:h-4 sm:w-4 text-primary" />
                               </div>
                             )}
 
-                            <div className="flex flex-col gap-1.5 items-start justify-center w-full">
-                              {availability.members.map((member) => (
-                                <div
-                                  key={member.id}
-                                  className={cn(
-                                    "flex items-center gap-2 text-sm font-medium transition-all",
-                                    member.id === selectedMember.id && "scale-110",
-                                  )}
-                                  title={member.name}
-                                >
+                            <div className="flex flex-col gap-1 sm:gap-1.5 items-start w-full pr-6 sm:pr-8 pl-2 sm:pl-0">
+                              {availability.members.length > 0 ? (
+                                availability.members.map((member) => (
                                   <div
+                                    key={member.id}
                                     className={cn(
-                                      "h-3 w-3 rounded-full flex-shrink-0",
-                                      member.color,
-                                      member.id === selectedMember.id && "ring-2 ring-white shadow-md",
+                                      "flex items-center gap-1 sm:gap-2 text-xs sm:text-sm font-medium transition-all w-full",
+                                      member.id === selectedMember.id && "scale-105",
                                     )}
-                                  />
-                                  <span className="text-foreground truncate">{member.name}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </button>
-
-                          {availability.allAvailable && (
-                            <div className="flex gap-1 mt-2 justify-center">
-                              <Button
-                                size="sm"
-                                variant={isLocked ? "outline" : "default"}
-                                onClick={() => onToggleLock(dateStr, slot.value)}
-                                className="gap-1 text-xs h-7"
-                              >
-                                {isLocked ? (
-                                  <>
-                                    <Unlock className="h-3 w-3" />
-                                    <span>{"解除"}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Lock className="h-3 w-3" />
-                                    <span>{"決定"}</span>
-                                  </>
-                                )}
-                              </Button>
-
-                              {isLocked && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => onExportToCalendar(dateStr, slot.value)}
-                                  className="gap-1 text-xs h-7"
-                                >
-                                  <Calendar className="h-3 w-3" />
-                                  <span>{"カレンダーへ"}</span>
-                                </Button>
+                                    title={member.name}
+                                  >
+                                    <div
+                                      className={cn(
+                                        "h-2 w-2 sm:h-3 sm:w-3 rounded-full flex-shrink-0",
+                                        member.color,
+                                        member.id === selectedMember.id && "ring-1 sm:ring-2 ring-white shadow-md",
+                                      )}
+                                    />
+                                    <span className="text-foreground truncate flex-1 min-w-0">{member.name}</span>
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-muted-foreground text-[9px] sm:text-xs">参加者なし</span>
                               )}
                             </div>
-                          )}
+
+                            {availability.allAvailable && (
+                              <div className="absolute top-0.5 right-0.5 sm:top-2 sm:right-2 z-20 flex items-center gap-1">
+                                {isLocked && isLoggedIn && (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      e.preventDefault()
+                                      await onExportToCalendar(slot)
+                                      // チェックマークを表示
+                                      setCalendarCheckStates((prev) => {
+                                        const newMap = new Map(prev)
+                                        newMap.set(slotKey, true)
+                                        return newMap
+                                      })
+                                      // 3秒後にチェックマークを非表示
+                                      setTimeout(() => {
+                                        setCalendarCheckStates((prev) => {
+                                          const newMap = new Map(prev)
+                                          newMap.delete(slotKey)
+                                          return newMap
+                                        })
+                                      }, 3000)
+                                    }}
+                                    onMouseDown={(e) => {
+                                      e.stopPropagation()
+                                      e.preventDefault()
+                                    }}
+                                    type="button"
+                                    className={cn(
+                                      "h-5 w-5 sm:h-6 sm:w-6 rounded-full cursor-pointer",
+                                      "flex items-center justify-center",
+                                      "backdrop-blur-sm border shadow-sm",
+                                      "transition-colors",
+                                      showCalendarCheck
+                                        ? "bg-green-500 border-green-600 text-white hover:bg-green-600"
+                                        : "bg-background/90 border-border text-foreground hover:bg-background"
+                                    )}
+                                    title="カレンダーへ"
+                                  >
+                                    {showCalendarCheck ? (
+                                      <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                                    ) : (
+                                      <Calendar className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                                    )}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                    onToggleLock(slot)
+                                  }}
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                  }}
+                                  type="button"
+                                  className={cn(
+                                    "h-5 w-5 sm:h-6 sm:w-6 rounded-full cursor-pointer",
+                                    "flex items-center justify-center",
+                                    "backdrop-blur-sm border shadow-sm",
+                                    "hover:opacity-90 transition-colors",
+                                    isLocked
+                                      ? "bg-blue-500 border-blue-600 text-white hover:bg-blue-600"
+                                      : "bg-background/90 border-border text-foreground hover:bg-background"
+                                  )}
+                                >
+                                  {isLocked ? (
+                                    <Lock className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                                  ) : (
+                                    <Unlock className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     )

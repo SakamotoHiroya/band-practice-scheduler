@@ -1,152 +1,170 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ScheduleHeader } from "@/components/schedule-header"
-import { ScheduleGrid } from "@/components/schedule-grid"
-
-interface Member {
-  id: string
-  name: string
-  color: string
-}
+import { useRouter } from "next/navigation"
+import { Button } from "@/components/ui/button"
+import { Music, Plus, ArrowRight } from "lucide-react"
+import { supabaseClient } from "@/lib/supabase"
+import { CreateBandModal } from "@/components/CreateBandModal"
+import { createBand } from "@/services/bandService"
+import { ToastContainer, useToast } from "@/components/toast"
 
 interface Band {
-  id: string
+  id: number
   name: string
-  members: Member[]
 }
 
-const initialBands: Band[] = [
-  {
-    id: "1",
-    name: "The Rockets",
-    members: [
-      { id: "1", name: "Yuta (Vo)", color: "bg-blue-500" },
-      { id: "2", name: "Kenji (Gt)", color: "bg-purple-500" },
-      { id: "3", name: "Mai (Ba)", color: "bg-pink-500" },
-      { id: "4", name: "Sora (Dr)", color: "bg-amber-500" },
-    ],
-  },
-  {
-    id: "2",
-    name: "Sunset Drive",
-    members: [
-      { id: "1", name: "Yuta (Vo)", color: "bg-blue-500" },
-      { id: "5", name: "Haruka (Gt)", color: "bg-teal-500" },
-      { id: "6", name: "Ren (Key)", color: "bg-indigo-500" },
-    ],
-  },
-  {
-    id: "3",
-    name: "Night Owls",
-    members: [
-      { id: "3", name: "Mai (Ba)", color: "bg-pink-500" },
-      { id: "7", name: "Takeshi (Gt)", color: "bg-orange-500" },
-      { id: "8", name: "Yuki (Dr)", color: "bg-cyan-500" },
-      { id: "9", name: "Mio (Vo)", color: "bg-rose-500" },
-    ],
-  },
-]
-
 export default function Home() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window !== "undefined") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-    }
-    return "light"
-  })
-  const [selectedBand, setSelectedBand] = useState(initialBands[0])
-  const [selectedMember, setSelectedMember] = useState<Member>(initialBands[0].members[0])
-  const [schedules, setSchedules] = useState<Record<string, Record<string, boolean>>>({})
-  const [lockedSlots, setLockedSlots] = useState<Set<string>>(new Set())
+  const router = useRouter()
+  const [bands, setBands] = useState<Band[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateBandModal, setShowCreateBandModal] = useState(false)
+  const [isCreatingBand, setIsCreatingBand] = useState(false)
+  const { toasts, showToast, removeToast } = useToast()
 
+  // バンド一覧を取得
   useEffect(() => {
-    const root = window.document.documentElement
-    root.classList.remove("light", "dark")
-    root.classList.add(theme)
-  }, [theme])
+    const fetchBands = async () => {
+      try {
+        const { data: bandsData, error } = await supabaseClient
+          .from("bands")
+          .select("id, name")
+          .order("name")
 
-  useEffect(() => {
-    setSelectedMember(selectedBand.members[0])
-  }, [selectedBand])
-
-  const toggleSlot = (memberId: string, date: string, time: string) => {
-    const key = `${date}-${time}`
-    if (lockedSlots.has(key)) {
+        if (error) {
+          console.error("Error fetching bands:", error)
       return
     }
 
-    setSchedules((prev) => {
-      const memberSchedule = prev[memberId] || {}
-      return {
-        ...prev,
-        [memberId]: {
-          ...memberSchedule,
-          [key]: !memberSchedule[key],
-        },
+        setBands(bandsData || [])
+      } catch (err) {
+        console.error("Unexpected error:", err)
+      } finally {
+        setLoading(false)
       }
-    })
-  }
+    }
 
-  const toggleLockSlot = (date: string, time: string) => {
-    const key = `${date}-${time}`
-    setLockedSlots((prev) => {
-      const newSet = new Set(prev)
-      if (newSet.has(key)) {
-        newSet.delete(key)
-      } else {
-        newSet.add(key)
+    fetchBands()
+  }, [])
+
+  const handleCreateBand = async (bandName: string) => {
+    setIsCreatingBand(true)
+    try {
+      const result = await createBand(bandName.trim())
+      if (!result.success) {
+        showToast(result.error || "バンドの作成に失敗しました", "error")
+        setIsCreatingBand(false)
+        return
       }
-      return newSet
-    })
-  }
 
-  const exportToGoogleCalendar = (date: string, time: string) => {
-    // TODO: Implement Google Calendar API integration
-    console.log("Export to Google Calendar:", { date, time, band: selectedBand.name })
-    alert(`練習予定を Google カレンダーに追加します:\n${selectedBand.name}\n${date} ${time}`)
-  }
+      if (result.bandId) {
+        // バンド一覧を再取得
+        const { data: bandsData, error } = await supabaseClient
+          .from("bands")
+          .select("id, name")
+          .order("name")
 
-  const importFromGoogleCalendar = (memberId: string) => {
-    // TODO: Implement Google Calendar API integration
-    console.log("Import from Google Calendar for member:", memberId)
-    alert(`${memberId} の Google カレンダーから空き時間をインポートします`)
-  }
+        if (!error && bandsData) {
+          setBands(bandsData)
+        }
 
-  const handleCreateBand = () => {
-    // TODO: Show modal/form for band creation
-    console.log("Create new band")
-  }
+        // モーダルを閉じる
+        setShowCreateBandModal(false)
+        setIsCreatingBand(false)
 
-  const handleAddMember = () => {
-    // TODO: Show modal/form for adding member
-    console.log("Add new member to", selectedBand.name)
+        // 新しいバンドにリダイレクト
+        router.push(`/${result.bandId}`)
+      }
+    } catch (err) {
+      console.error("Error creating band:", err)
+      showToast("エラーが発生しました", "error")
+      setIsCreatingBand(false)
+    }
   }
 
   return (
     <div className="min-h-screen bg-background">
-      <ScheduleHeader
-        bands={initialBands}
-        selectedBand={selectedBand}
-        onBandChange={setSelectedBand}
-        theme={theme}
-        onThemeChange={setTheme}
-        onCreateBand={handleCreateBand}
+      {/* 通知 */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* バンド作成モーダル */}
+      <CreateBandModal
+        open={showCreateBandModal}
+        onClose={() => setShowCreateBandModal(false)}
+        onCreate={handleCreateBand}
+        loading={isCreatingBand}
       />
-      <main className="container mx-auto px-0 py-4 sm:px-4 sm:py-6">
-        <ScheduleGrid
-          schedules={schedules}
-          selectedBand={selectedBand}
-          selectedMember={selectedMember}
-          onMemberChange={setSelectedMember}
-          onToggleSlot={toggleSlot}
-          onAddMember={handleAddMember}
-          lockedSlots={lockedSlots}
-          onToggleLock={toggleLockSlot}
-          onExportToCalendar={exportToGoogleCalendar}
-          onImportFromCalendar={importFromGoogleCalendar}
-        />
-      </main>
+
+      <div className="container mx-auto px-4 py-16">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Music className="h-12 w-12 text-primary" />
+              <h1 className="text-4xl font-bold tracking-tight text-foreground">
+                BandScheduler
+              </h1>
+            </div>
+            <p className="text-xl text-muted-foreground mb-2">
+              軽音部でバンド練習を取るための予定合わせツール
+            </p>
+            <p className="text-muted-foreground">
+              各ユーザが予定のない箇所を入力すると全員の予定が合う箇所が表示されます
+            </p>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">読み込み中...</p>
+            </div>
+          ) : bands.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-semibold text-foreground">
+                  バンド一覧
+                </h2>
+                <Button
+                  onClick={() => setShowCreateBandModal(true)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  新しいバンドを作成
+                </Button>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {bands.map((band) => (
+                  <Button
+                    key={band.id}
+                    variant="outline"
+                    className="h-auto p-6 flex flex-col items-start gap-3 hover:bg-accent transition-colors"
+                    onClick={() => router.push(`/${band.id}`)}
+                  >
+                    <div className="flex items-center gap-3 w-full">
+                      <Music className="h-6 w-6 text-primary" />
+                      <span className="text-lg font-semibold text-left flex-1">
+                        {band.name}
+                      </span>
+                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground mb-4">
+                まだバンドが登録されていません
+              </p>
+              <Button
+                onClick={() => setShowCreateBandModal(true)}
+                className="gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                新しいバンドを作成
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
