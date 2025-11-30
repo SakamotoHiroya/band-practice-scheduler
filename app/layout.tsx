@@ -12,6 +12,12 @@ export const metadata: Metadata = {
   title: "BandScheduler - 共有スケジュール管理",
   description: "複数人で空き時間を共有・調整できるスケジュール管理アプリ",
   generator: "v0.app",
+  viewport: {
+    width: "device-width",
+    initialScale: 1,
+    maximumScale: 5,
+    userScalable: true,
+  },
   icons: {
     icon: [
       {
