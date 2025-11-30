@@ -2,8 +2,16 @@
 
 import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { Plus, Lock, Unlock, Calendar, CalendarPlus, X, ChevronLeft, ChevronRight, Check } from "lucide-react"
+import { Plus, Lock, Unlock, Calendar, CalendarPlus, X, ChevronLeft, ChevronRight, Check, Share2, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
 import type { Member, Band, Schedule, Period, Slot } from "@/lib/types"
 
 interface ScheduleGridProps {
@@ -26,6 +34,10 @@ interface ScheduleGridProps {
   isLoggedIn?: boolean
   onPreviousWeek?: () => void
   onNextWeek?: () => void
+  onPreviousDay?: () => void
+  onNextDay?: () => void
+  startDayOfWeek?: number
+  setStartDayOfWeek?: (day: number) => void
 }
 
 export function ScheduleGrid({
@@ -45,11 +57,18 @@ export function ScheduleGrid({
   isLoggedIn = false,
   onPreviousWeek,
   onNextWeek,
+  onPreviousDay,
+  onNextDay,
+  startDayOfWeek = 0,
+  setStartDayOfWeek,
 }: ScheduleGridProps) {
   // モバイルかどうかを判定
   const [isMobile, setIsMobile] = useState(false)
   // カレンダーボタンのチェックマーク表示状態（スロットごと）
   const [calendarCheckStates, setCalendarCheckStates] = useState<Map<string, boolean>>(new Map())
+  // 共有ダイアログの表示状態
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false)
+  const [isCopied, setIsCopied] = useState(false)
 
   useEffect(() => {
     const checkMobile = () => {
@@ -145,6 +164,14 @@ export function ScheduleGrid({
 
   return (
     <div className="space-y-4">
+      {/* バンド名 */}
+      <div className="px-4 pt-4">
+        <h2 className="text-2xl sm:text-3xl font-bold text-foreground">
+          {selectedBand.name}
+        </h2>
+      </div>
+
+      {/* メンバー一覧 */}
       <div className="p-4">
         <div className="flex flex-wrap gap-2">
           {selectedBand.members.map((member, i) => (
@@ -169,35 +196,125 @@ export function ScheduleGrid({
             </div>
           ))}
         </div>
+        
+        {/* 共有ボタン */}
+        <div className="mt-4">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setIsShareDialogOpen(true)}
+            className="gap-2"
+          >
+            <Share2 className="h-4 w-4" />
+            <span>共有</span>
+          </Button>
+        </div>
       </div>
 
+      {/* 共有ダイアログ */}
+      <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>バンドを共有</DialogTitle>
+            <DialogDescription>
+              このリンクを共有すると、他の人がこのバンドのスケジュールを表示できます。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={typeof window !== "undefined" ? `${window.location.origin}/${selectedBand.id}` : ""}
+                className="flex-1 px-3 py-2 text-sm border rounded-md bg-muted"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/${selectedBand.id}` : ""
+                  try {
+                    await navigator.clipboard.writeText(shareUrl)
+                    setIsCopied(true)
+                    setTimeout(() => setIsCopied(false), 2000)
+                  } catch (err) {
+                    console.error("コピーに失敗しました:", err)
+                  }
+                }}
+                className="gap-2"
+              >
+                {isCopied ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    <span>コピー済み</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    <span>コピー</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* 週移動コントロール */}
-      <div className="flex items-center justify-center gap-4 p-4">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onPreviousWeek}
-          className="gap-2"
-          disabled={!onPreviousWeek}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          <span className="hidden sm:inline">前の週</span>
-        </Button>
-        <span className="text-sm font-medium text-foreground min-w-[120px] text-center">
-          {isMobile && dates.length === 1
-            ? formatDisplayDate(dates[0])
-            : formatWeekRange()}
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onNextWeek}
-          className="gap-2"
-          disabled={!onNextWeek}
-        >
-          <span className="hidden sm:inline">次の週</span>
-          <ChevronRight className="h-4 w-4" />
-        </Button>
+      <div className="space-y-3 p-4">
+        <div className="flex items-center justify-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={isMobile && onPreviousDay ? onPreviousDay : onPreviousWeek}
+            className="gap-2"
+            disabled={isMobile && onPreviousDay ? !onPreviousDay : !onPreviousWeek}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">前の週</span>
+          </Button>
+          <span className="text-sm font-medium text-foreground min-w-[120px] text-center">
+            {isMobile && dates.length === 1
+              ? formatDisplayDate(dates[0])
+              : formatWeekRange()}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={isMobile && onNextDay ? onNextDay : onNextWeek}
+            className="gap-2"
+            disabled={isMobile && onNextDay ? !onNextDay : !onNextWeek}
+          >
+            <span className="hidden sm:inline">次の週</span>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        
+        {/* 週の開始曜日選択（PC表示時のみ） */}
+        {!isMobile && setStartDayOfWeek && (
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-sm text-muted-foreground">週の開始:</span>
+            <Select
+              value={startDayOfWeek.toString()}
+              onValueChange={(value) => {
+                setStartDayOfWeek(parseInt(value, 10))
+              }}
+            >
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">日曜日</SelectItem>
+                <SelectItem value="1">月曜日</SelectItem>
+                <SelectItem value="2">火曜日</SelectItem>
+                <SelectItem value="3">水曜日</SelectItem>
+                <SelectItem value="4">木曜日</SelectItem>
+                <SelectItem value="5">金曜日</SelectItem>
+                <SelectItem value="6">土曜日</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-xl bg-card/50 backdrop-blur-sm border border-border shadow-sm">

@@ -220,6 +220,25 @@ export function useActor(bandId: number | null) {
     }, 1000)
   }, [])
 
+  /**
+   * 参加モーダルの表示条件を計算
+   * 
+   * 表示する条件:
+   * 1. bandIdが確定している（URLから取得できている）
+   * 2. アクターが未設定、またはバンドに参加していない場合
+   * 
+   * 注意: ローディング状態は待たない（bandIdが確定したら即座に表示）
+   */
+  const showActorModal = 
+    // 参加処理中はモーダルを表示しない
+    !isParticipating &&
+    // bandIdが確定しているか（URLから取得できている）
+    bandId !== null &&
+    // アクターが未設定、またはバンドに参加していない
+    (!actor || // アクターが未設定（ローディング中でも表示）
+      (actor && isActorInBand === false) || // バンドに参加していない
+      (actor && isActorInBand === null && !actorLoading)) // バンド参加状態が未確認で、アクターのローディングが完了
+
   return {
     actor,
     actorLoading,
@@ -231,5 +250,6 @@ export function useActor(bandId: number | null) {
     resetActor,
     isParticipating,
     startParticipating,
+    showActorModal,
   }
 }

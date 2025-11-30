@@ -118,6 +118,102 @@ export async function createBand(name: string): Promise<{ success: boolean; band
 }
 
 /**
+ * 指定されたアクターが参加しているバンドのみを取得する
+ */
+export async function fetchBandsByActorId(actorId: number): Promise<Band[]> {
+  try {
+    // アクターが参加しているバンドのIDを取得
+    const { data: bandMembersData, error: bandMembersError } = await supabaseClient
+      .from("band-members")
+      .select("band_id")
+      .eq("actor_id", actorId)
+      .eq("is_active", true)
+
+    if (bandMembersError) {
+      console.error("Error fetching band members:", bandMembersError)
+      return []
+    }
+
+    if (!bandMembersData || bandMembersData.length === 0) {
+      return []
+    }
+
+    const bandIds = bandMembersData.map((bm) => bm.band_id)
+
+    // バンド情報を取得
+    const { data: bandsData, error: bandsError } = await supabaseClient
+      .from("bands")
+      .select("id, name")
+      .in("id", bandIds)
+      .order("name")
+
+    if (bandsError) {
+      console.error("Error fetching bands:", bandsError)
+      return []
+    }
+
+    if (!bandsData || bandsData.length === 0) {
+      return []
+    }
+
+    // 各バンドのメンバーを取得
+    const bandsWithMembers = await Promise.all(
+      bandsData.map(async (band) => {
+        const { data: bandMembersData, error: bandMembersError } = await supabaseClient
+          .from("band-members")
+          .select("actor_id")
+          .eq("band_id", band.id)
+          .eq("is_active", true)
+
+        if (bandMembersError) {
+          console.error(`Error fetching band members for band ${band.id}:`, bandMembersError)
+          return { ...band, members: [] }
+        }
+
+        if (!bandMembersData || bandMembersData.length === 0) {
+          return { ...band, members: [] }
+        }
+
+        // 各actorの情報を取得
+        const actorIds = bandMembersData.map((bm) => bm.actor_id)
+
+        if (actorIds.length === 0) {
+          return { ...band, members: [] }
+        }
+
+        const { data: actorsData, error: actorsError } = await supabaseClient
+          .from("actors")
+          .select("id, display_name")
+          .in("id", actorIds)
+
+        if (actorsError) {
+          console.error(`Error fetching actors for band ${band.id}:`, actorsError)
+          return { ...band, members: [] }
+        }
+
+        if (!actorsData || actorsData.length === 0) {
+          return { ...band, members: [] }
+        }
+
+        // Memberオブジェクトを作成
+        const members: Member[] = actorsData.map((actor, index) => ({
+          id: actor.id,
+          name: actor.display_name || `ゲスト${actor.id}`,
+          color: MEMBER_COLORS[index % MEMBER_COLORS.length],
+        }))
+
+        return { ...band, members }
+      })
+    )
+
+    return bandsWithMembers
+  } catch (err) {
+    console.error("Unexpected error fetching bands by actor:", err)
+    return []
+  }
+}
+
+/**
  * バンドからメンバーを削除する（ソフトデリート）
  */
 export async function removeMemberFromBand(

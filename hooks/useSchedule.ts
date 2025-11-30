@@ -4,7 +4,7 @@ import { fetchVotesAsSchedule } from "@/services/voteService"
 import { fetchDecidedPeriods } from "@/services/decidedPeriodService"
 import { addVote, removeVote } from "@/services/voteService"
 import { addDecidedPeriod, removeDecidedPeriod } from "@/services/decidedPeriodService"
-import { getWeekRange, getPreviousWeek, getNextWeek, formatDateToString } from "@/lib/utils/date"
+import { getWeekRange, getPreviousWeek, getNextWeek, getPreviousDay, getNextDay, formatDateToString } from "@/lib/utils/date"
 import type { Band, Schedule, Period, Slot } from "@/lib/types"
 
 interface ScheduleState {
@@ -27,11 +27,20 @@ interface PendingOperation {
  * データ取得、更新、楽観的更新を統合的に管理
  */
 export function useSchedule(selectedBand: Band | null, actor: { id: number } | null) {
+  // 週の開始曜日をlocalStorageから取得（デフォルトは木曜日=4）
+  const [startDayOfWeek, setStartDayOfWeekState] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("weekStartDay")
+      return saved ? parseInt(saved, 10) : 4
+    }
+    return 4
+  })
+
   const [state, setState] = useState<ScheduleState>({
     schedules: {},
     lockedSlots: [],
     periods: [],
-    dateRange: getWeekRange(),
+    dateRange: getWeekRange(new Date(), startDayOfWeek),
     loading: true,
     error: null,
   })
@@ -378,6 +387,47 @@ export function useSchedule(selectedBand: Band | null, actor: { id: number } | n
   }, [])
 
   /**
+   * 前の日に移動（モバイル用）
+   */
+  const goToPreviousDay = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      dateRange: getPreviousDay(prev.dateRange),
+      loading: true,
+      error: null,
+    }))
+  }, [])
+
+  /**
+   * 次の日に移動（モバイル用）
+   */
+  const goToNextDay = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      dateRange: getNextDay(prev.dateRange),
+      loading: true,
+      error: null,
+    }))
+  }, [])
+
+  /**
+   * 週の開始曜日を変更
+   */
+  const setStartDayOfWeek = useCallback((day: number) => {
+    setStartDayOfWeekState(day)
+    if (typeof window !== "undefined") {
+      localStorage.setItem("weekStartDay", day.toString())
+    }
+    // 今日を含む週を表示
+    setState((prev) => ({
+      ...prev,
+      dateRange: getWeekRange(new Date(), day),
+      loading: true,
+      error: null,
+    }))
+  }, [])
+
+  /**
    * データを手動で再読み込み
    */
   const refresh = useCallback(() => {
@@ -410,10 +460,14 @@ export function useSchedule(selectedBand: Band | null, actor: { id: number } | n
     dateRange: state.dateRange,
     loading: state.loading,
     error: state.error,
+    startDayOfWeek,
+    setStartDayOfWeek,
     toggleSlot,
     toggleLockSlot,
     goToPreviousWeek,
     goToNextWeek,
+    goToPreviousDay,
+    goToNextDay,
     refresh,
   }
 }
